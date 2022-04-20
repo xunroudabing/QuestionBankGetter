@@ -21,7 +21,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * 海信学堂题库抓取工具
+ * His学堂题库抓取工具
  * 
  * @author Administrator
  *
@@ -29,25 +29,7 @@ import org.json.JSONObject;
 public class QuestionBankGetter {
 
 	public static void main(String[] args) throws IOException {
-		System.out.println("输入examID,按回车继续...");
-		String args1 = new BufferedReader(new InputStreamReader(System.in)).readLine();
-		int examID = -1;
-		try {
-			examID = Integer.parseInt(args1);
-		} catch (Exception e) {
-			// TODO: handle exception
-			System.err.println("examID必须为整型数字");
-			return;
-		}
-		System.out.println("输入accessToken,按回车继续...");
-		String accessToken = new BufferedReader(new InputStreamReader(System.in)).readLine();
-
-		final String path = System.getProperty("user.dir");
-
-		QuestionBankGetter getter = new QuestionBankGetter(accessToken);
-		getter.start(examID, path);
-		System.out.println("任务完成,按回车退出程序...");
-		new BufferedReader(new InputStreamReader(System.in)).readLine();
+		
 	}
 
 	private String mBankName = "";
@@ -55,56 +37,119 @@ public class QuestionBankGetter {
 	private String mAccessToken = "1exP8MAIIUfx5vfsvMGBUVyFhNBudbbBEcCRw3rvumHcq_clHuG1ttwyOqkd1SOorql-lFMp7YuyWsfwLezownn8H93li89_I26XI_cpjO5Wm2OKHBgy0sYC9_fDEeS_9Uj53WMSG93BT5tv41_Xe2emBBIFw5sSW_wCaRde4X1sxOGxtRySek3y8TNU1d_aIsauKQNkNi";
 	private static final int LIMIT = 1000;// 题库题数上限
 
-	public QuestionBankGetter(String accessToken) {
-		mAccessToken = accessToken;
+	public QuestionBankGetter() {
 		mHttpClient = HttpClients.createDefault();
 	}
-
-	public void start(int examId, String path) {
-		int paperId = getPaperId(examId);
+	/**
+	 * 获取题库JSON数据
+	 * @param examId 考试Id
+	 * @param token 接口token
+	 * @return
+	 */
+	public QuestionAndAnswer getQuestionBankData(int examId,String token) {
+		int paperId = getPaperId(examId,token);
 		System.out.println("paperId is " + paperId);
 		if (paperId < 0) {
-			System.err.println("未检索到题库!");
-			return;
+			System.err.println("未检索到试卷!");
+			return null;
 		}
-		int bankId = getBankId(paperId);
-		System.out.println("bankId is " + bankId);
-		String orignJson = getQuestionOriginList(bankId);
+		
+		Bank bank = getBankId(paperId,token);
+		if(bank == null) {
+			System.err.println("未检索到题库!");
+			return null;
+		}
+		System.out.println("bankId is " + bank.id);
+		
+		int bankId = bank.id;
+		//获取题库原始数据
+		String orignJson = getQuestionOriginList(bankId,token);
+		
 		// 获取处理后的问题列表
 		String questionList = getQuestionList(orignJson);
+		
 		// 获取答案，生成题库JSON
-		String bankJson = getAllAnswerFromServer(questionList);
-		// 生成题库
-		String targetFilePath = path + File.separator + examId + "-" + mBankName + ".txt";
-		createAnswerTxt(bankJson, targetFilePath);
+		String bankJson = getAllAnswerFromServer(questionList,token);
+		
+		QuestionAndAnswer ret = new QuestionAndAnswer();
+		ret.filename = examId + "-" + bank.name + ".txt";
+		ret.json = bankJson;
+		return ret;
+		
 	}
-
-	@Deprecated
-	public void start(String fromPath, String toPath) {
-		String json = getAllAnswer(fromPath);
-		createAnswerTxt(json, toPath);
-	}
-
-	@Deprecated
-	public String getQuestionListFromPath(String path) {
-		FileInputStream is = null;
+	/**
+	 * 获取题库id
+	 * @param paperId 试卷id
+	 * @param token
+	 * @return
+	 */
+	public Bank getBankId(int paperId,String token) {
+		Bank ret = null;
+		long timestamp = System.currentTimeMillis();
+		String url = String.format(
+				"https://api-hedu-mobi.hismarttv.com/heduopapi/papers/getRandomRules?accessToken=%s&autonomousOrgCode=dmt_yf&userDeptNumber=dmt_yf_rj_nxcp_nxrj&paperId=%d&_=%s",
+				token, paperId, String.valueOf(timestamp));
+		String responseStr = httpGet(url);
+		if (responseStr == null) {
+			System.err.println("getBankId error");
+		}
 		try {
-			is = new FileInputStream(new File(path));
-			List<String> list = IOUtils.readLines(is, "UTF-8");
-			StringBuilder sb = new StringBuilder();
-			for (String s : list) {
-				sb.append(s);
+			JSONObject object = new JSONObject(responseStr);
+			JSONObject data = object.getJSONObject("data");
+			JSONArray questionBanks = data.getJSONArray("questionBanks");
+			JSONObject temp = questionBanks.getJSONObject(0);
+			String bankName = temp.getString("name");
+			System.out.println("题库名称:" + bankName);
+	
+			JSONArray questionRulesBanks = temp.getJSONArray("questionRulesBanks");
+			int bankId = questionRulesBanks.getJSONObject(0).getInt("questionBankId");
+			ret = new Bank();
+			ret.name = bankName;
+			ret.id = bankId;
+		} catch (Exception e) {
+			// TODO: handle exception
+			e.printStackTrace();
+		}
+		return ret;
+	}
+	
+	/**
+	 * 获取试卷id
+	 * @param examId
+	 * @return
+	 */
+	public int getPaperId(int examId,String token) {
+		long timestamp = System.currentTimeMillis();
+		String url = String.format(
+				"https://api-hedu-mobi.hismarttv.com/heduapi/v1.0/webapi/getExamDetail?accessToken=%s&terminalType=2&roleCodes=user&autonomousOrgCode=dmt_yf&userDeptNumber=dmt_yf_hw_rj_hw&examId=%d&_=%s",
+				token, examId, String.valueOf(timestamp));
+		String responseStr = httpGet(url);
+		System.out.println("getPaperId:" + responseStr);
+		if (responseStr == null) {
+			System.err.println("getPaperId error");
+		}
+		try {
+			//System.out.println(responseStr);
+			JSONObject object = new JSONObject(responseStr);
+			int resultCode = object.getInt("resultCode");
+			if (resultCode == 0) {
+				JSONObject data = object.getJSONObject("data");
+				JSONObject paperInfo = data.getJSONObject("paperInfo");
+				int paperId = paperInfo.getInt("paperId");
+				return paperId;
+			}else if (resultCode == 1) {
+				String errorDesc=object.getString("errorDesc");
+				System.err.println("getPaperId调用失败,errorDesc:" + errorDesc);
 			}
-			String json = sb.toString();
-			return getQuestionList(json);
 		} catch (Exception e) {
 			// TODO: handle exception
 			e.printStackTrace();
 		} finally {
-			IOUtils.closeQuietly(is);
+
 		}
-		return null;
+		return -1;
 	}
+
 
 	public String getQuestionList(String json) {
 
@@ -112,7 +157,7 @@ public class QuestionBankGetter {
 		JSONArray multiList = new JSONArray();
 		JSONArray judgeList = new JSONArray();
 		try {
-			// System.out.println(json);
+			//System.out.println(json);
 			JSONObject object = new JSONObject(json);
 			JSONArray data = object.getJSONArray("data");
 			int length = data.length();
@@ -154,8 +199,21 @@ public class QuestionBankGetter {
 		}
 		return null;
 	}
+	
+	public String getQuestionOriginList(int bankId,String token) {
+		long timestamp = System.currentTimeMillis();
+		String url = String.format(
+				"https://api-hedu-mobi.hismarttv.com/heduopapi/questions/getList?accessToken=%s&autonomousOrgCode=dmt_yf&userDeptNumber=dmt_yf_rj_nxcp_nxrj&questionBankId=%d&start=1&limit=%d&_=%s",
+				token, bankId, LIMIT, String.valueOf(timestamp));
+		System.out.println("正在获取题库题目列表...");
+		String responseStr = httpGet(url);
+		if (responseStr == null) {
+			System.err.println("getQuestionList error");
+		}
+		return responseStr;
+	}
 
-	public String getAllAnswerFromServer(String json) {
+	public String getAllAnswerFromServer(String json,String token) {
 		try {
 			JSONArray singleList_answer = new JSONArray();
 			JSONArray multiList_answer = new JSONArray();
@@ -170,7 +228,7 @@ public class QuestionBankGetter {
 			for (int i = 0; i < singleList.length(); i++) {
 				JSONObject item = singleList.getJSONObject(i);
 				int id = item.getInt("id");
-				String answerStr = getAnswer(id);
+				String answerStr = getAnswer(id,token);
 				if (answerStr != null) {
 					JSONArray answerArray = new JSONArray(answerStr);
 					item.put("answer", answerArray);
@@ -187,7 +245,7 @@ public class QuestionBankGetter {
 			for (int i = 0; i < multiList.length(); i++) {
 				JSONObject item = multiList.getJSONObject(i);
 				int id = item.getInt("id");
-				String answerStr = getAnswer(id);
+				String answerStr = getAnswer(id,token);
 				if (answerStr != null) {
 					JSONArray answerArray = new JSONArray(answerStr);
 					item.put("answer", answerArray);
@@ -204,7 +262,7 @@ public class QuestionBankGetter {
 			for (int i = 0; i < judgeList.length(); i++) {
 				JSONObject item = judgeList.getJSONObject(i);
 				int id = item.getInt("id");
-				String answerStr = getAnswer(id);
+				String answerStr = getAnswer(id,token);
 				if (answerStr != null) {
 					JSONArray answerArray = new JSONArray(answerStr);
 					item.put("answer", answerArray);
@@ -229,82 +287,7 @@ public class QuestionBankGetter {
 		return null;
 	}
 
-	public String getAllAnswer(String path) {
-		String json = getQuestionListFromPath(path);
-		try {
-			JSONArray singleList_answer = new JSONArray();
-			JSONArray multiList_answer = new JSONArray();
-			JSONArray judgeList_answer = new JSONArray();
-			JSONObject object = new JSONObject(json);
-			JSONArray singleList = object.getJSONArray("single");
-			JSONArray multiList = object.getJSONArray("multi");
-			JSONArray judgeList = object.getJSONArray("judge");
-
-			System.out.println("单选题答案获取中...");
-			String alert1 = "";
-			for (int i = 0; i < singleList.length(); i++) {
-				JSONObject item = singleList.getJSONObject(i);
-				int id = item.getInt("id");
-				String answerStr = getAnswer(id);
-				if (answerStr != null) {
-					JSONArray answerArray = new JSONArray(answerStr);
-					item.put("answer", answerArray);
-				}
-				singleList_answer.put(item);
-				alert1 += "=";
-				System.out.print(alert1);
-				Thread.sleep(100);
-			}
-			System.out.println("\r单选题答案获取完成...");
-
-			System.out.println("多选题答案获取中...");
-			String alert2 = "";
-			for (int i = 0; i < multiList.length(); i++) {
-				JSONObject item = multiList.getJSONObject(i);
-				int id = item.getInt("id");
-				String answerStr = getAnswer(id);
-				if (answerStr != null) {
-					JSONArray answerArray = new JSONArray(answerStr);
-					item.put("answer", answerArray);
-				}
-				multiList_answer.put(item);
-				alert2 += "=";
-				System.out.print(alert2);
-				Thread.sleep(100);
-			}
-			System.out.println("\r多选题答案获取完成...");
-
-			System.out.println("判断题答案获取中...");
-			String alert3 = "";
-			for (int i = 0; i < judgeList.length(); i++) {
-				JSONObject item = judgeList.getJSONObject(i);
-				int id = item.getInt("id");
-				String answerStr = getAnswer(id);
-				if (answerStr != null) {
-					JSONArray answerArray = new JSONArray(answerStr);
-					item.put("answer", answerArray);
-				}
-				judgeList_answer.put(item);
-				alert3 += "=";
-				System.out.print(alert3);
-				Thread.sleep(100);
-			}
-			System.out.println("\r判断题答案获取完成...");
-
-			JSONObject ret = new JSONObject();
-			ret.put("single", singleList_answer);
-			ret.put("multi", multiList_answer);
-			ret.put("judge", judgeList_answer);
-			return ret.toString();
-
-		} catch (Exception e) {
-			// TODO: handle exception
-			e.printStackTrace();
-		}
-		return null;
-	}
-
-	public void createAnswerTxt(String json, String targetFilePath) {
+	public void generateFile(String json, String targetFilePath) {
 		StringBuffer sb = new StringBuffer();
 		try {
 			JSONObject object = new JSONObject(json);
@@ -400,11 +383,11 @@ public class QuestionBankGetter {
 	 * @param id
 	 * @return
 	 */
-	public String getAnswer(int id) {
+	public String getAnswer(int id,String token) {
 		long timestamp = System.currentTimeMillis();
 		String url = String.format(
 				"https://api-hedu-mobi.hismarttv.com/heduopapi/questions/getList?accessToken=%s&autonomousOrgCode=dmt_yf&userDeptNumber=dmt_yf_rj_nxcp_nxrj&questionId=%d&_=%s",
-				mAccessToken, id, String.valueOf(timestamp));
+				token, id, String.valueOf(timestamp));
 		String responseStr = httpGet(url);
 		if (responseStr == null) {
 			System.err.println("getAnswer response is null");
@@ -480,7 +463,11 @@ public class QuestionBankGetter {
 		return null;
 
 	}
-
+	/**
+	 * 获取试卷id
+	 * @param examId
+	 * @return
+	 */
 	public int getPaperId(int examId) {
 		long timestamp = System.currentTimeMillis();
 		String url = String.format(
@@ -539,16 +526,5 @@ public class QuestionBankGetter {
 		return -1;
 	}
 
-	public String getQuestionOriginList(int bankId) {
-		long timestamp = System.currentTimeMillis();
-		String url = String.format(
-				"https://api-hedu-mobi.hismarttv.com/heduopapi/questions/getList?accessToken=%s&autonomousOrgCode=dmt_yf&userDeptNumber=dmt_yf_rj_nxcp_nxrj&questionBankId=%d&start=1&limit=%d&_=%s",
-				mAccessToken, bankId, LIMIT, String.valueOf(timestamp));
-		System.out.println("正在获取题库题目列表...");
-		String responseStr = httpGet(url);
-		if (responseStr == null) {
-			System.err.println("getQuestionList error");
-		}
-		return responseStr;
-	}
+
 }
