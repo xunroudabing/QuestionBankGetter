@@ -24,9 +24,10 @@ public class Main {
 
 		final String path = System.getProperty("user.dir");
 		QuestionBankGetter getter = new QuestionBankGetter();
+		//得到题库原始数据
 		QuestionAndAnswer result = getter.getQuestionBankData(examID, accessToken);
 		
-		// 生成题库
+		//生成题库
 		String targetFilePath = path + File.separator + result.filename;
 		getter.generateFile(result.json, targetFilePath);
 		System.out.println("任务完成,按回车退出程序...");
