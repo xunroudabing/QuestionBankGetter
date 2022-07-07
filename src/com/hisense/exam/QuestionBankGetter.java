@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStreamReader;
 
 import org.apache.http.HttpEntity;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -25,6 +26,29 @@ import org.json.JSONObject;
 public class QuestionBankGetter {
 
 	public static void main(String[] args) throws IOException {
+		String accessToken = "1ePCwMAITRXUQSwZ-vt6JCxk59oT3MCJZDYpgyv6i5K00E0WYPuQlBqYo_9fyPJWol8Fk5ZuA1FxKBtKbv7ZoNeCpabkL2Ro81tHRUu56zZrvthDUgx3wk88--KbsXrtT21d1YCCm6KNgty6N-k_TfbeVN_VqfLBmrUaq_hlmV1vN8MW2H1YiqTCtYAnq2Pxu5vmTdr_nz";
+
+		final String path = System.getProperty("user.dir");
+		QuestionBankGetter getter = new QuestionBankGetter();
+
+//		QuestionAndAnswer result = getter.getQuestionBankDataByPaperId(8607, accessToken);
+//		
+//		if (result != null) {
+//			// 生成题库
+//			String targetFilePath = path + File.separator + result.filename;
+//			getter.generateFile(result.json, targetFilePath);
+//		}
+
+		// 6074
+		for (int i = 6000; i < 6074; i++) {
+			// 得到题库原始数据
+			QuestionAndAnswer result = getter.getQuestionBankDataByPaperId(i, accessToken);
+			if (result != null) {
+				// 生成题库
+				String targetFilePath = path + File.separator + result.filename;
+				getter.generateFile(result.json, targetFilePath);
+			}
+		}
 
 	}
 
@@ -77,6 +101,67 @@ public class QuestionBankGetter {
 	}
 
 	/**
+	 * 获取题库JSON数据
+	 * 
+	 * @param examId 考试Id
+	 * @param token  接口token
+	 * @return
+	 */
+	public QuestionAndAnswer getQuestionBankDataByPaperId(int paperId, String token) {
+		Bank bank = getBankId(paperId, token);
+		if (bank == null) {
+			System.err.println("未检索到题库!");
+			return null;
+		}
+		System.out.println("bankId is " + bank.id);
+
+		int bankId = bank.id;
+		// 获取题库原始数据
+		String orignJson = getQuestionOriginList(bankId, token);
+		if (orignJson == null) {
+			System.err.println("接口异常，未获取到原始数据!");
+			return null;
+		}
+
+		// 获取处理后的问题列表
+		String questionList = getQuestionList(orignJson);
+
+		// 获取答案，生成题库JSON
+		String bankJson = getAllAnswerFromServer(questionList, token);
+
+		QuestionAndAnswer ret = new QuestionAndAnswer();
+		ret.filename = paperId + "-" + bank.name + ".txt";
+		ret.json = bankJson;
+		return ret;
+
+	}
+
+	/**
+	 * 获取题库JSON数据
+	 * 
+	 * @param examId 考试Id
+	 * @param token  接口token
+	 * @return
+	 */
+	public QuestionAndAnswer getQuestionBankDataByBankId(int bankId, String token) {
+
+		// 获取题库原始数据
+		String orignJson = getQuestionOriginList(bankId, token);
+
+		// 获取处理后的问题列表
+		String questionList = getQuestionList(orignJson);
+
+		// 获取答案，生成题库JSON
+		String bankJson = getAllAnswerFromServer(questionList, token);
+
+		QuestionAndAnswer ret = new QuestionAndAnswer();
+		ret.filename = bankId + "-" + ".txt";
+		ret.json = bankJson;
+		return ret;
+
+	}
+
+	/**
 	 * 获取题库id
 	 * 
 	 * @param paperId 试卷id
@@ -94,6 +179,7 @@ public class QuestionBankGetter {
 			System.err.println("getBankId error");
 		}
 		try {
+			//System.out.println(responseStr);
 			JSONObject object = new JSONObject(responseStr);
 			JSONObject data = object.getJSONObject("data");
 			JSONArray questionBanks = data.getJSONArray("questionBanks");
@@ -157,12 +243,17 @@ public class QuestionBankGetter {
 		JSONArray singleList = new JSONArray();
 		JSONArray multiList = new JSONArray();
 		JSONArray judgeList = new JSONArray();
+
+		JSONArray otherList = new JSONArray();
+		JSONArray blankList = new JSONArray();
+		JSONArray questionList = new JSONArray();
 		try {
 			// System.out.println(json);
 			JSONObject object = new JSONObject(json);
 			JSONArray data = object.getJSONArray("data");
 			int length = data.length();
 			System.out.println("题库题目总数量:" + length);
+			//System.out.println(json);
 			for (int i = 0; i < data.length(); i++) {
 				JSONObject question = data.getJSONObject(i);
 				int id = question.getInt("id");
@@ -172,7 +263,7 @@ public class QuestionBankGetter {
 				item.put("id", id);
 				item.put("name", name);
 				item.put("type", type);
-				// type 3-单选 5-多选 7-判断
+				// type 3-单选 5-多选 7-判断 10-填空 14-简答
 				switch (type) {
 				case 3:
 					singleList.put(item);
@@ -183,7 +274,14 @@ public class QuestionBankGetter {
 				case 7:
 					judgeList.put(item);
 					break;
+				case 10:
+					blankList.put(item);
+					break;
+				case 14:
+					questionList.put(item);
+					break;
 				default:
+					otherList.put(item);
 					break;
 				}
 			}
@@ -191,7 +289,12 @@ public class QuestionBankGetter {
 			ret.put("single", singleList);
 			ret.put("multi", multiList);
 			ret.put("judge", judgeList);
-
+			ret.put("blank", blankList);
+			ret.put("question", questionList);
+			ret.put("other", otherList);
+			if (otherList.length() > 0) {
+				System.out.println("其它类型题目数量:" + length);
+			}
 			return ret.toString();
 
 		} catch (JSONException e) {
@@ -223,8 +326,11 @@ public class QuestionBankGetter {
 			JSONArray singleList = object.getJSONArray("single");
 			JSONArray multiList = object.getJSONArray("multi");
 			JSONArray judgeList = object.getJSONArray("judge");
+			JSONArray blankList = object.getJSONArray("blank");
+			JSONArray questionList = object.getJSONArray("question");
+			JSONArray otherList = object.getJSONArray("other");
 
-			//System.out.println("单选题答案获取中...");
+			// System.out.println("单选题答案获取中...");
 			String alert1 = "";
 			for (int i = 0; i < singleList.length(); i++) {
 				JSONObject item = singleList.getJSONObject(i);
@@ -235,12 +341,12 @@ public class QuestionBankGetter {
 					item.put("answer", answerArray);
 				}
 				singleList_answer.put(item);
-				showProgress("单选题答案获取中...",singleList.length(), i + 1);
+				showProgress("单选题答案获取中...", singleList.length(), i + 1);
 				Thread.sleep(100);
 			}
 			System.out.println("\r单选题答案获取完成");
 
-			//System.out.println("多选题答案获取中...");
+			// System.out.println("多选题答案获取中...");
 			for (int i = 0; i < multiList.length(); i++) {
 				JSONObject item = multiList.getJSONObject(i);
 				int id = item.getInt("id");
@@ -250,12 +356,12 @@ public class QuestionBankGetter {
 					item.put("answer", answerArray);
 				}
 				multiList_answer.put(item);
-				showProgress("多选题答案获取中...",multiList.length(), i + 1);
+				showProgress("多选题答案获取中...", multiList.length(), i + 1);
 				Thread.sleep(100);
 			}
 			System.out.println("\r多选题答案获取完成");
 
-			//System.out.println("判断题答案获取中...");
+			// System.out.println("判断题答案获取中...");
 			String alert3 = "";
 			for (int i = 0; i < judgeList.length(); i++) {
 				JSONObject item = judgeList.getJSONObject(i);
@@ -266,7 +372,7 @@ public class QuestionBankGetter {
 					item.put("answer", answerArray);
 				}
 				judgeList_answer.put(item);
-				showProgress("判断题答案获取中...",judgeList.length(), i + 1);
+				showProgress("判断题答案获取中...", judgeList.length(), i + 1);
 				Thread.sleep(100);
 			}
 			System.out.println("\r判断题答案获取完成");
@@ -275,6 +381,10 @@ public class QuestionBankGetter {
 			ret.put("single", singleList_answer);
 			ret.put("multi", multiList_answer);
 			ret.put("judge", judgeList_answer);
+			ret.put("blank", blankList);
+			ret.put("question", questionList);
+			ret.put("other", otherList);
+
 			return ret.toString();
 
 		} catch (Exception e) {
@@ -291,6 +401,9 @@ public class QuestionBankGetter {
 			JSONArray singleList = object.getJSONArray("single");
 			JSONArray multiList = object.getJSONArray("multi");
 			JSONArray judgeList = object.getJSONArray("judge");
+			JSONArray blankList = object.getJSONArray("blank");
+			JSONArray questionList = object.getJSONArray("question");
+			JSONArray otherList = object.getJSONArray("other");
 
 			sb.append("单选题:").append("\r\n");
 			for (int i = 0; i < singleList.length(); i++) {
@@ -345,6 +458,43 @@ public class QuestionBankGetter {
 				}
 				sb.append("\r\n");
 			}
+
+			if (blankList.length() > 0) {
+				sb.append("填空题:").append("\r\n");
+				for (int i = 0; i < blankList.length(); i++) {
+					JSONObject item = blankList.getJSONObject(i);
+					String name = item.getString("name");
+					// 题目
+					sb.append(String.format("%d.%s \n", i + 1, name));
+					// todo-目前没有答案
+					sb.append("\r\n");
+				}
+			}
+
+			if (questionList.length() > 0) {
+				sb.append("简答题:").append("\r\n");
+				for (int i = 0; i < questionList.length(); i++) {
+					JSONObject item = questionList.getJSONObject(i);
+					String name = item.getString("name");
+					// 题目
+					sb.append(String.format("%d.%s \n", i + 1, name));
+					// todo-目前没有答案
+					sb.append("\r\n");
+				}
+			}
+
+			if (otherList.length() > 0) {
+				sb.append("其它:").append("\r\n");
+				for (int i = 0; i < otherList.length(); i++) {
+					JSONObject item = otherList.getJSONObject(i);
+					String name = item.getString("name");
+					// 题目
+					sb.append(String.format("%d.%s \n", i + 1, name));
+					// todo-目前没有答案
+					sb.append("\r\n");
+				}
+			}
+
 		} catch (Exception e) {
 			// TODO: handle exception
 			e.printStackTrace();
@@ -366,7 +516,7 @@ public class QuestionBankGetter {
 
 	}
 
-	protected void showProgress(String msg,int total, int finish) {
+	protected void showProgress(String msg, int total, int finish) {
 		StringBuilder str = new StringBuilder();
 		str.append(String.format("\r%s[", msg));
 		for (int i = 0; i < total; i++) {
@@ -378,7 +528,7 @@ public class QuestionBankGetter {
 				str.append("=");
 			}
 		}
-		int percent = (100 * finish)/total;
+		int percent = (100 * finish) / total;
 		str.append("]" + percent + "%");
 		System.out.print(str.toString());
 	}
